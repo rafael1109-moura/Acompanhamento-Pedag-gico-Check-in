@@ -8,7 +8,6 @@ from google.oauth2.service_account import Credentials
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import json
 import os
 
 # ===============================================================
@@ -28,12 +27,7 @@ SPREADSHEET_ID  = st.secrets["SPREADSHEET_ID"]
 
 # Credenciais Google lidas do secrets
 # O Streamlit pode entregar como string JSON ou como objeto já parseado (AttrDict)
-_creds_raw = st.secrets["GOOGLE_CREDENTIALS_JSON"]
-if isinstance(_creds_raw, str):
-    GOOGLE_CREDENTIALS_DICT = json.loads(_creds_raw)
-else:
-    # AttrDict / objeto nativo do Streamlit — converte para dict simples
-    GOOGLE_CREDENTIALS_DICT = {k: v for k, v in _creds_raw.items()}
+GOOGLE_CREDENTIALS_DICT = dict(st.secrets["GOOGLE_CREDENTIALS_JSON"])
 
 # Limiares de alerta
 DIAS_REUNIAO_ATENCAO = 21
