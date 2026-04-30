@@ -262,7 +262,7 @@ if _logo_path.exists():
 
 _logo_tag = (
     f'<img src="data:image/jpeg;base64,{_logo_b64}" '
-    f'style="height:60px;object-fit:contain;margin-right:18px;filter:brightness(0) invert(1)">'
+    f'style="height:60px;object-fit:contain;margin-right:18px;)">'
     if _logo_b64 else ""
 )
 
