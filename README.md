@@ -80,6 +80,7 @@ No terminal, dentro da pasta do projeto, execute:
 
 ```bash
 streamlit run main.py
+streamlit python -m streamlit run main.py
 ```
 
 Após isso, o navegador abrirá automaticamente com o dashboard.
