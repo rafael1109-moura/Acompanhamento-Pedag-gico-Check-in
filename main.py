@@ -9,6 +9,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
+import unicodedata
+import re
 
 # ===============================================================
 # CONFIGURAÇÃO — lida do st.secrets
@@ -79,20 +81,77 @@ def carregar_dados():
 
     return df, df_alunos
 
+def normalizar_nome(nome):
+    """Normaliza nome para comparação: maiúsculas, sem acentos, remove espaços extras."""
+    if nome is None:
+        return ""
+    s = str(nome).strip()
+    s = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", s)
+    s = unicodedata.normalize('NFKD', s)
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"\s+", " ", s).upper()
+    return s
+
+
+def obter_primeiro_segundo_nome(original):
+    if not original:
+        return ""
+    norm = normalizar_nome(original)
+    parts = norm.split()
+    if not parts:
+        return ""
+    first = parts[0].capitalize()
+    second = parts[1].capitalize() if len(parts) > 1 else ""
+    return (first + (" " + second if second else "")).strip()
+
+
+def localizar_aluno(nome, df_alunos):
+    """Localiza aluno em df_alunos por comparação parcial e retorna info."""
+    target = normalizar_nome(nome)
+    if '_norm' not in df_alunos.columns:
+        df_alunos['_norm'] = df_alunos['Nome do Aluno'].fillna('').apply(normalizar_nome)
+        df_alunos['_first'] = df_alunos['_norm'].apply(lambda x: x.split()[0] if x.split() else '')
+        df_alunos['_second'] = df_alunos['_norm'].apply(lambda x: x.split()[1] if len(x.split()) > 1 else '')
+
+    t_parts = target.split()
+    t_first = t_parts[0] if t_parts else ''
+    t_second = t_parts[1] if len(t_parts) > 1 else ''
+
+    # caso 1: primeiro e segundo batem
+    if t_first:
+        mask = (df_alunos['_first'] == t_first) & (df_alunos['_second'] == t_second) & (t_second != '')
+        if mask.any():
+            row = df_alunos[mask].iloc[0]
+            return {'turma': row.get('turma', ''), 'email': row.get('Email do Orientador', ''), 'nome_oficial': row.get('Nome do Aluno', '')}
+
+    # caso 2: somente primeiro bate
+    if t_first:
+        mask = (df_alunos['_first'] == t_first)
+        if mask.any():
+            row = df_alunos[mask].iloc[0]
+            return {'turma': row.get('turma', ''), 'email': row.get('Email do Orientador', ''), 'nome_oficial': row.get('Nome do Aluno', '')}
+
+    # caso 3: substring
+    if t_first:
+        mask = df_alunos['_norm'].str.contains(t_first)
+        if mask.any():
+            row = df_alunos[mask].iloc[0]
+            return {'turma': row.get('turma', ''), 'email': row.get('Email do Orientador', ''), 'nome_oficial': row.get('Nome do Aluno', '')}
+
+    return None
+
+
 def processar(df, df_alunos):
-    """Limpa tipos, cruza turma e calcula campos derivados."""
+    """Limpa tipos, cruza turma e calcula colunas derivadas com nomes curtos."""
 
-    # Normaliza nome do aluno para cruzamento (maiúsculas, sem espaços extras)
-    df['_nome_key'] = df['Aluno'].str.upper().str.strip()
-    df_alunos['_nome_key'] = df_alunos['Nome do Aluno'].str.upper().str.strip()
+    # cria colunas curtas para exibição
+    df['Aluno curto'] = df['Aluno'].apply(obter_primeiro_segundo_nome)
+    df['Orientador curto'] = df['Orientador'].apply(obter_primeiro_segundo_nome)
 
-    # Cruza turma e email do orientador
-    mapa = df_alunos.set_index('_nome_key')[['turma', 'Email do Orientador']].to_dict('index')
-
-    df['Turma'] = df['_nome_key'].map(lambda n: mapa.get(n, {}).get('turma', '—'))
-    df['Email Orientador'] = df['_nome_key'].map(
-        lambda n: mapa.get(n, {}).get('Email do Orientador', '')
-    )
+    # localiza turma e email do orientador usando busca parcial
+    infos = df['Aluno'].apply(lambda nome: localizar_aluno(nome, df_alunos))
+    df['Turma'] = infos.apply(lambda i: i.get('turma', '—') if isinstance(i, dict) and i.get('turma') not in (None, '') else '—')
+    df['Email Orientador'] = infos.apply(lambda i: i.get('email', '') if isinstance(i, dict) else '')
 
     # Converte numéricos
     df['Dias sem reunião'] = pd.to_numeric(df['Dias sem reunião'], errors='coerce')
@@ -103,13 +162,10 @@ def processar(df, df_alunos):
     df['Turma'] = pd.to_numeric(df['Turma'], errors='coerce').fillna(0).astype(int)
     df['Turma'] = df['Turma'].apply(lambda t: f"Turma {t}" if t > 0 else "—")
 
-    # Abreviação do nome orientador (2 primeiros nomes); discentes usam nome completo
-    df['Orientador curto'] = df['Orientador'].str.title().str.split().str[:2].str.join(' ')
-
     # Corrige "dias sem reunião" para discentes que não preencheram (NaN / valores absurdos)
     df.loc[df['Dias sem reunião'] > 3650, 'Dias sem reunião'] = pd.NA
 
-    return df.drop(columns=['_nome_key'])
+    return df
 
 # ===============================================================
 # ENVIO DE EMAIL PARA ORIENTADORES
@@ -177,11 +233,14 @@ def disparar_alertas_orientadores(df):
         ok, msg = enviar_email_orientador(
             email_orientador  = row.get('Email Orientador', ''),
             nome_orientador   = row.get('Orientador curto', row.get('Orientador', '')),
-            nome_aluno        = row.get('Aluno', ''),
+            nome_aluno        = row.get('Aluno curto', row.get('Aluno', '')),
             dias              = int(row['Dias sem reunião'])
         )
-        resultados.append({'Aluno': row['Aluno'], 'Orientador': row['Orientador'],
-                           'Enviado': '✅ Sim' if ok else '❌ Falhou', 'Detalhe': msg})
+        resultados.append({
+            'Aluno': row.get('Aluno curto', row.get('Aluno', '')),
+            'Orientador': row.get('Orientador curto', row.get('Orientador', '')),
+            'Enviado': 'Sim' if ok else 'Falhou', 'Detalhe': msg
+        })
     return pd.DataFrame(resultados)
 
 # ===============================================================
@@ -307,6 +366,7 @@ with col_g3:
     st.markdown("#### Dias sem reunião por discente")
     df_reun = dfv[dfv['Dias sem reunião'].notna()].sort_values('Dias sem reunião', ascending=False)
     fig3 = px.bar(df_reun, x='Dias sem reunião', y='Aluno',
+    fig3 = px.bar(df_reun, x='Dias sem reunião', y='Aluno curto',
                   orientation='h',
                   color='Dias sem reunião',
                   color_continuous_scale=[[0,'#16a34a'],[0.5,'#ca8a04'],[1,'#dc2626']],
@@ -323,9 +383,9 @@ with col_g4:
     st.markdown("#### Dias aguardando correção")
     df_corr = dfv[dfv['Dias aguardando'].notna()].sort_values('Dias aguardando', ascending=False)
     if df_corr.empty:
-        st.success("🎉 Nenhum trabalho aguardando correção com prazo registrado!")
+        st.success("Nenhum trabalho aguardando correção com prazo registrado!")
     else:
-        fig4 = px.bar(df_corr, x='Dias aguardando', y='Aluno',
+        fig4 = px.bar(df_corr, x='Dias aguardando', y='Aluno curto',
                       orientation='h',
                       color='Dias aguardando',
                       color_continuous_scale=[[0,'#ca8a04'],[1,'#dc2626']],
@@ -346,7 +406,7 @@ tab_critico, tab_atencao, tab_ok, tab_todos = st.tabs(
 )
 
 COLUNAS_TABELA = [
-    'Turma', 'Aluno', 'Orientador', 'Última reunião',
+    'Turma', 'Aluno curto', 'Orientador curto', 'Última reunião',
     'Dias sem reunião', 'Status reunião',
     'Tem pendentes?', 'Qtd trabalhos', 'Postagem mais antiga',
     'Dias aguardando', 'Status correção', 'Status geral'
@@ -382,7 +442,7 @@ else:
         f"Os orientadores serão notificados por email ao clicar no botão abaixo."
     )
     st.dataframe(
-        criticos_df[['Turma','Aluno','Orientador','Dias sem reunião','Email Orientador']].reset_index(drop=True),
+        criticos_df[['Turma','Aluno curto','Orientador curto','Dias sem reunião','Email Orientador']].reset_index(drop=True),
         hide_index=True, use_container_width=True
     )
 
