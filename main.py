@@ -167,6 +167,56 @@ def processar(df, df_alunos):
 
     return df
 
+
+def is_missing_value(x):
+    """Retorna True se o valor for considerado ausente para exibição."""
+    if x is None:
+        return True
+    try:
+        if pd.isna(x):
+            return True
+    except Exception:
+        pass
+    if isinstance(x, str) and x.strip() == "":
+        return True
+    return False
+
+
+def format_value_display(x):
+    """Formata um valor para exibição: substitui ausentes por '-' mantendo o original caso contrário."""
+    return '-' if is_missing_value(x) else x
+
+
+def display_safe_df(df, cols=None):
+    """Retorna uma cópia do dataframe pronta para exibição — substitui NaN/None/'' por '-'.
+
+    Importante: não altera o dataframe original usado para cálculos/plots.
+    """
+    disp = df.copy()
+    if cols is None:
+        cols_iter = disp.columns.tolist()
+    else:
+        cols_iter = list(cols)
+
+    for c in cols_iter:
+        if c not in disp.columns:
+            continue
+        s = disp[c]
+        # máscara para valores ausentes (NaN / None)
+        try:
+            mask = s.isna()
+        except Exception:
+            mask = pd.isna(s)
+
+        # strings vazias também devem virar '-'
+        if s.dtype == object:
+            mask = mask | (s.astype(str).str.strip() == '')
+
+        if mask.any():
+            disp[c] = s.astype(object).where(~mask, '-')
+
+    return disp
+
 # ===============================================================
 # ENVIO DE EMAIL PARA ORIENTADORES
 # ===============================================================
@@ -178,15 +228,19 @@ def enviar_email_orientador(email_orientador, nome_orientador, nome_aluno, dias)
     if not email_orientador or '@' not in email_orientador:
         return False, "Email do orientador inválido."
 
+    # usa valores formatados para exibição no assunto e corpo (não altera email de destino)
+    display_orientador = format_value_display(nome_orientador)
+    display_aluno = format_value_display(nome_aluno)
+
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"[QualiSaúde] Alerta de acompanhamento — {nome_aluno}"
+    msg['Subject'] = f"[QualiSaúde] Alerta de acompanhamento — {display_aluno}"
     msg['From']    = EMAIL_REMETENTE
     msg['To']      = email_orientador.strip()
 
     corpo_txt = (
-        f"Olá, professor(a) {nome_orientador}.\n\n"
+        f"Olá, professor(a) {display_orientador}.\n\n"
         f"Notamos que já fazem mais de 30 dias desde a última reunião com o(a) aluno(a) "
-        f"orientado(a) {nome_aluno} ({dias} dias sem registro de reunião).\n\n"
+        f"orientado(a) {display_aluno} ({dias} dias sem registro de reunião).\n\n"
         f"Pedimos que verifique e, se possível, regularize o acompanhamento.\n\n"
         f"Obrigado!\n\nEquipe QualiSaúde / UFRN"
     )
@@ -260,7 +314,7 @@ def card_kpi(col, valor, label, sub, cor):
                 border-left:4px solid {txt};margin-bottom:4px">
       <div style="font-size:32px;font-weight:700;color:{txt}">{valor}</div>
       <div style="font-size:14px;font-weight:600;color:{txt};margin-top:2px">{label}</div>
-      <div style="font-size:12px;color:#888;margin-top:4px">{sub}</div>
+      <div style="font-size:12px;color:#888;margin-top:4px">{format_value_display(sub)}</div>
     </div>""", unsafe_allow_html=True)
 
 def badge(texto, tipo):
@@ -416,7 +470,7 @@ def mostrar_tabela(subset):
     if subset.empty:
         st.info("Nenhum aluno nesta categoria.")
     else:
-        st.dataframe(subset[cols_ok].reset_index(drop=True), hide_index=True, use_container_width=True)
+        st.dataframe(display_safe_df(subset[cols_ok].reset_index(drop=True)), hide_index=True, use_container_width=True)
 
 with tab_critico:
     mostrar_tabela(dfv[dfv['Status geral'].str.contains('Requer', na=False)])
@@ -441,7 +495,7 @@ else:
         f"Os orientadores serão notificados por email ao clicar no botão abaixo."
     )
     st.dataframe(
-        criticos_df[['Turma','Aluno curto','Orientador curto','Dias sem reunião','Email Orientador']].reset_index(drop=True),
+        display_safe_df(criticos_df[['Turma','Aluno curto','Orientador curto','Dias sem reunião','Email Orientador']].reset_index(drop=True)),
         hide_index=True, use_container_width=True
     )
 
@@ -451,7 +505,7 @@ else:
         if st.button("🚀 Enviar alertas agora para os orientadores", type="primary"):
             with st.spinner("Enviando emails..."):
                 resultado = disparar_alertas_orientadores(dfv)
-            st.dataframe(resultado, hide_index=True, use_container_width=True)
+            st.dataframe(display_safe_df(resultado), hide_index=True, use_container_width=True)
             enviados = len(resultado[resultado['Enviado'] == 'Sim'])
             st.success(f"✅ {enviados} email(s) enviado(s) de {len(resultado)} orientadores notificados.")
 
