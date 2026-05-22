@@ -365,7 +365,6 @@ col_g3, col_g4 = st.columns(2)
 with col_g3:
     st.markdown("#### Dias sem reunião por discente")
     df_reun = dfv[dfv['Dias sem reunião'].notna()].sort_values('Dias sem reunião', ascending=False)
-    fig3 = px.bar(df_reun, x='Dias sem reunião', y='Aluno',
     fig3 = px.bar(df_reun, x='Dias sem reunião', y='Aluno curto',
                   orientation='h',
                   color='Dias sem reunião',
@@ -453,7 +452,7 @@ else:
             with st.spinner("Enviando emails..."):
                 resultado = disparar_alertas_orientadores(dfv)
             st.dataframe(resultado, hide_index=True, use_container_width=True)
-            enviados = len(resultado[resultado['Enviado'] == '✅ Sim'])
+            enviados = len(resultado[resultado['Enviado'] == 'Sim'])
             st.success(f"✅ {enviados} email(s) enviado(s) de {len(resultado)} orientadores notificados.")
 
 # ── Rodapé ──
